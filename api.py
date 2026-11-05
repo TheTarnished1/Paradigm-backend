@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any, List
@@ -8,7 +8,19 @@ import PyPDF2  # New import for reading PDFs
 from langchain_groq import ChatGroq
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+MAX_TEXT_CHARS = 10000  # keeps extracted text within Groq token limits
+
 app = FastAPI()
+
+# 1. CORS: set ALLOWED_ORIGINS on Render to a comma-separated list of frontend URLs.
+# Unset means any site can call this API. No cookies are used, so "*" exposes no sessions.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=os.environ.get("ALLOWED_ORIGINS", "*").split(","),
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # 2. DEFINE THE AI'S STRUCTURED BRAIN
 class ActionPayload(BaseModel):
@@ -31,10 +43,11 @@ class ChatRequest(BaseModel):
 # 3. INITIALIZE GROQ
 synapse = ChatGroq(
     temperature=0.1,
-    model_name="llama3-8b-8192",
+    model_name="openai/gpt-oss-20b",
     api_key=os.environ.get("GROQ_API_KEY")
 )
-structured_synapse = synapse.with_structured_output(ParadigmResponse)
+# json_schema, not the default tool calling: gpt-oss-20b returned 400s on 2 of 3 test prompts with tools
+structured_synapse = synapse.with_structured_output(ParadigmResponse, method="json_schema")
 
 
 # ==========================================
@@ -82,20 +95,28 @@ async def chat_with_paradigm(req: ChatRequest):
 @app.post("/api/upload")
 async def upload_file(file: UploadFile = File(...)):
     extracted_text = ""
-    
+
+    # ponytail: the server has already spooled the body by now, so this limits memory and
+    # parsing, not bandwidth or disk. Cap body size at the proxy if that becomes a problem.
+    data = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="File too large (10 MB max).")
+
     try:
         # If it's a PDF, extract text page by page
         if file.filename.lower().endswith(".pdf"):
-            pdf_reader = PyPDF2.PdfReader(io.BytesIO(await file.read()))
+            pdf_reader = PyPDF2.PdfReader(io.BytesIO(data))
             for page in pdf_reader.pages:
-                extracted_text += page.extract_text() + "\n"
-                
+                extracted_text += (page.extract_text() or "") + "\n"
+                if len(extracted_text) >= MAX_TEXT_CHARS:
+                    break
+
         # If it's a standard text file
         else:
-            extracted_text = (await file.read()).decode("utf-8", errors="ignore")
-            
-        # Limit text to ~10,000 characters to prevent Groq token limits from exploding
-        return {"extracted_text": extracted_text[:10000]}
-        
+            extracted_text = data.decode("utf-8", errors="ignore")
+
+        return {"extracted_text": extracted_text[:MAX_TEXT_CHARS]}
+
+
     except Exception as e:
         return {"error": str(e), "extracted_text": ""}
