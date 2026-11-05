@@ -10,6 +10,7 @@ from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 MAX_TEXT_CHARS = 10000  # keeps extracted text within Groq token limits
+USER_PROFILE = os.environ.get("USER_PROFILE", "Not provided.")  # private details stay out of this public repo
 
 app = FastAPI()
 
@@ -61,8 +62,8 @@ async def chat_with_paradigm(req: ChatRequest):
     
     STRICT RULES:
     1. Be concise, use my preference mothod of speech, be direct, and use emojis.
-    2. USER PROFILE: Pascal, 17, CS & Physics student at Nile University.
-    3. COGNITIVE STYLE: Has inattentive ADHD. Use headers, bullet points, and 'Focus & Flow' formatting.
+    2. USER PROFILE: {USER_PROFILE}
+    3. FORMATTING: Use headers, bullet points, and 'Focus & Flow' formatting.
        
     COURSE MANAGEMENT SUPERPOWERS:
     If Pascal asks to add, create, or remove a course, module, or topic, you MUST populate the 'action' field in your response.

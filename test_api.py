@@ -3,6 +3,7 @@ import io
 import os
 
 os.environ["GROQ_API_KEY"] = "test-key-not-real"  # no Groq calls happen here
+os.environ["USER_PROFILE"] = "test-profile-value"
 
 import PyPDF2
 from fastapi.testclient import TestClient
@@ -44,5 +45,17 @@ r = client.options(
     headers={"Origin": "https://example.vercel.app", "Access-Control-Request-Method": "POST"},
 )
 assert r.status_code == 200 and "access-control-allow-origin" in r.headers
+
+
+# USER_PROFILE reaches the system prompt
+class FakeSynapse:
+    def invoke(self, messages):
+        self.system_prompt = messages[0].content
+        return api.ParadigmResponse(reply="hi")
+
+
+api.structured_synapse = fake = FakeSynapse()
+r = client.post("/api/chat", json={"message": "hi", "history": []})
+assert r.status_code == 200 and "USER PROFILE: test-profile-value" in fake.system_prompt, r.text
 
 print("ok")
